@@ -1,4 +1,4 @@
-set(TARGET JumpingOptimization)
+set(TARGET SkyJumpOptimization)
 
 file(GLOB INCS *.h)
 file(GLOB SRCS *.cpp)
