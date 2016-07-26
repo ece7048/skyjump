@@ -13,9 +13,9 @@ using namespace std;
 
 // Global variables
 INIReader ini;
-int stepCount = 0;
-double initialTime;
-double finalTime;
+int stepCount = 0, controlPoints;
+double controlPointsInterval;
+double initialTime, finalTime;
 double bestSoFar = Infinity;
 double forceThreshold = 1.0;
 double settleTime = 0.2;
@@ -29,6 +29,9 @@ ofstream bestSoFarLog;
 ofstream verboseLog;
 ofstream debugLog;
 std::clock_t optimizerStartTime;
+
+void mapControlPointsToController(int index, const Vector& parameters,
+    PiecewiseConstantFunction& bangBangControl);
 
 //=============================================================================
 // EVENT HANDLER: TerminateSimulation
@@ -79,7 +82,6 @@ class JumpingOptimizationSystem : public OptimizerSystem
 {
 public:
 
-    /* Constructor class. Parameters passed are accessed in the objectiveFunc() class. */
     JumpingOptimizationSystem(int numParameters, Model& aModel) :
         OptimizerSystem(numParameters), osimModel(aModel)
     {
@@ -93,8 +95,7 @@ public:
         optimizerStartTime = std::clock();
     }
 
-    /* Objective Function. */
-    int objectiveFunc(const Vector &newControllerParameters, bool new_coefficients, Real& f) const
+    int objectiveFunc(const Vector &parameters, bool newCoefficients, Real& f) const
     {
         // Grab actuator and controller sets
         const Set<Actuator> &actuatorSet = osimModel.getActuators();
@@ -107,17 +108,19 @@ public:
         {
             // define a piecewise constant function for both sides
             PiecewiseConstantFunction bangBangControl;
-            bangBangControl.addPoint(initialTime, 0);
-            bangBangControl.addPoint(newControllerParameters[2 * i], 1);
-            bangBangControl.addPoint(newControllerParameters[2 * i] + newControllerParameters[2 * i + 1], 0);
+            mapControlPointsToController(i, parameters, bangBangControl);
 
             // Update the right side
-            PrescribedController* controller_r = dynamic_cast<PrescribedController*>(&controllerSet.get(2 * i));
-            controller_r->prescribeControlForActuator(actuatorSet.get(i).getName(), bangBangControl.clone());
+            PrescribedController* controller_r = dynamic_cast<PrescribedController*>(
+                &controllerSet.get(2 * i));
+            controller_r->prescribeControlForActuator(
+                actuatorSet.get(i).getName(), bangBangControl.clone());
 
             // Update the left side
-            PrescribedController* controller_l = dynamic_cast<PrescribedController*>(&controllerSet.get(2 * i + 1));
-            controller_l->prescribeControlForActuator(actuatorSet.get(i + numActuators / 2).getName(), bangBangControl.clone());
+            PrescribedController* controller_l = dynamic_cast<PrescribedController*>(
+                &controllerSet.get(2 * i + 1));
+            controller_l->prescribeControlForActuator(
+                actuatorSet.get(i + numActuators / 2).getName(), bangBangControl.clone());
         }
 
         // Initialize the system. initSystem() cannot be used here because adding the event handler
@@ -145,68 +148,23 @@ public:
         osimModel.equilibrateMuscles(osimState);
 
         // Create the integrator for the simulation.
+        //1.0e-6 seems to converge faster (both objFunc calls and time) than 1.0e-5
         RungeKuttaMersonIntegrator integrator(osimModel.getMultibodySystem());
-        integrator.setAccuracy(1.0e-6); //1.0e-6 seems to converge faster (both objFunc calls and time) than 1.0e-5
+        integrator.setAccuracy(1.0e-6);
 
-        // Create a manager to run the simulation. Can change manager options to save run time and memory or print more information
+        // Create a manager to run the simulation.
+        // Can change manager options to save run time and memory or print more information
         Manager manager(osimModel, integrator);
-        //manager.setWriteToStorage(false);
-        //manager.setPerformAnalyses(false);
 
-        // Integrate from initial time to final time and integrate
+        // Integrate
         manager.setInitialTime(initialTime);
         manager.setFinalTime(finalTime);
         manager.integrate(osimState);
 
-        //// compute cost function
-        //Storage* kin = bodyKinematics->getPositionStorage();
-        //Storage& force = forceAnalysis->updForceStorage();
+        // compute objective
+        f = calculateObjective();
 
-        //Array<double> time, comY, lumbarLimit, kneeRLimit, kneeLLimit;
-        //kin->getTimeColumn(time);
-        //kin->getDataColumn("center_of_mass_Y", comY);
-        //force.getDataColumn("LumbarExtensionLimit", lumbarLimit);
-        //force.getDataColumn("KneeLimit_r", kneeRLimit);
-        //force.getDataColumn("KneeLimit_l", kneeLLimit);
-
-        //double maxHeight = 0;
-        //int maxIndex = 0;
-        //for (int i = 0; i < time.size(); i++)
-        //{
-        //    if (comY[i] > maxHeight)
-        //    {
-        //        maxHeight = comY[i];
-        //        maxIndex = i;
-        //    }
-        //}
-
-        //// trapezoid integration 0.5 sum (ti - ti-1) * (fi - fi-1)
-        //double trapezSum = 0;
-        //for (int i = 1; i <= maxIndex; i++)
-        //{
-        //    double fi = pow(lumbarLimit[i], 2) + pow(kneeRLimit[i], 2) + pow(kneeLLimit[i], 2);
-        //    double fminus = pow(lumbarLimit[i - 1], 2) + pow(kneeRLimit[i - 1], 2) + pow(kneeLLimit[i - 1], 2);
-        //    trapezSum += (time[i] - time[i - 1]) * (fi + fminus);
-        //}
-        //// multiply by - because optimization tries to minimize
-        //f = -(maxHeight - penaltyWeight * 0.5 * trapezSum);
-
-        //cout << "Max height: " << maxHeight << endl;
-        //cout << "Ligaments: " << 0.5 * trapezSum << endl;
-        //cout << "Cost: " << -f << endl;
-
-        /* Calculate the scalar quantity we want to minimize or maximize.
-        *  In this case, we’re maximizing the height of the COM of the jumper
-        *  so to maximize, calculate (position + velocity^2)/(2g) when simulation ends.
-        *  Then take the negative of that quantity (since optimizers minimize).
-        */
-        osimModel.getMultibodySystem().realize(osimState, Stage::Velocity);
-        Vec3 COM_position = osimModel.getMultibodySystem().getMatterSubsystem().calcSystemMassCenterLocationInGround(osimState);
-        Vec3 COM_velocity = osimModel.getMultibodySystem().getMatterSubsystem().calcSystemMassCenterVelocityInGround(osimState);
-        double g = -osimModel.getGravity()[1];
-        double maxHeight = COM_position[1] + pow(COM_velocity[1], 2.0) / (2.0*g);
-        f = -maxHeight;
-
+        // report results
         stepCount++;
 
         // Store and print the results of a "random sample"
@@ -236,24 +194,103 @@ public:
             bodyKinematics->printResults("Jumper_best", resultDir);
             bestSoFar = f;
             bestSoFarLog << stepCount << "\t" << f << "\t"
-                << newControllerParameters << "\t" << (std::clock() - optimizerStartTime) / CLOCKS_PER_SEC << endl;
+                << newCoefficients << "\t"
+                << (std::clock() - optimizerStartTime) / CLOCKS_PER_SEC << endl;
 
             verboseLog << stepCount << "\t" << f << "\t"
-                << newControllerParameters << "\t" << (std::clock() - optimizerStartTime) / CLOCKS_PER_SEC << endl;
+                << newCoefficients << "\t"
+                << (std::clock() - optimizerStartTime) / CLOCKS_PER_SEC << endl;
         }
         // Print every 100 objective function calls.
-        else if (stepCount % 100 == 0)
+        else if (stepCount % 50 == 0)
         {
             verboseLog << stepCount << "\t" << f << "\t"
-                << newControllerParameters << "\t" << (std::clock() - optimizerStartTime) / CLOCKS_PER_SEC << endl;
+                << newCoefficients << "\t"
+                << (std::clock() - optimizerStartTime) / CLOCKS_PER_SEC << endl;
         }
 
-        return(0);
+        return 0;
+    }
+
+private:
+
+    double calculateObjective() const
+    {
+        // compute cost function
+        Storage* positions = bodyKinematics->getPositionStorage();
+        Storage* velocities = bodyKinematics->getVelocityStorage();
+        Storage& forces = forceAnalysis->updForceStorage();
+
+        Array<double> time, comY, comYVel, lumbarLimit, kneeRLimit, kneeLLimit;
+        positions->getTimeColumn(time);
+        positions->getDataColumn("center_of_mass_Y", comY);
+        velocities->getDataColumn("center_of_mass_Y", comYVel);
+        forces.getDataColumn("LumbarExtensionLimit", lumbarLimit);
+        forces.getDataColumn("KneeLimit_r", kneeRLimit);
+        forces.getDataColumn("KneeLimit_l", kneeLLimit);
+
+        // find max height
+        double maxHeight = 0, maxVelocity = 0;
+        int maxIndex = 0;
+        for (int i = 0; i < time.size(); i++)
+        {
+            if (comY[i] > maxHeight)
+            {
+                maxHeight = comY[i];
+                maxIndex = i;
+            }
+
+            if (comYVel[i] > maxVelocity)
+            {
+                maxVelocity = comYVel[i];
+            }
+        }
+
+        // trapezoid integration 0.5 sum (ti - ti-1) * (fi - fi-1)
+        double trapezSum = 0;
+        for (int i = 1; i <= maxIndex; i++)
+        {
+            double fi =
+                pow(lumbarLimit[i], 2) +
+                pow(kneeRLimit[i], 2) +
+                pow(kneeLLimit[i], 2);
+            double fminus =
+                pow(lumbarLimit[i - 1], 2) +
+                pow(kneeRLimit[i - 1], 2) +
+                pow(kneeLLimit[i - 1], 2);
+
+            trapezSum += (time[i] - time[i - 1]) * (fi + fminus);
+        }
+        double ligamentsPenalty = 0.5 * trapezSum;
+
+        // multiply by -1.0 because optimization tries to minimize
+        double g = -osimModel.getGravity()[1];
+        double f = -(maxHeight + pow(maxVelocity, 2) / (2 * g) - penaltyWeight * ligamentsPenalty);
+
+        cout << "Max height: " << maxHeight << endl;
+        cout << "Max velocity: " << maxVelocity << endl;
+        cout << "Ligaments penalty: " << ligamentsPenalty << endl;
+        cout << "Cost: " << f << endl;
+
+        return f;
     }
 
 private:
     Model& osimModel;
 };
+
+void mapControlPointsToController(int index, const Vector& parameters,
+    PiecewiseConstantFunction& bangBangControl)
+{
+    Vector points = parameters(index * controlPoints, controlPoints);
+
+    double dt = controlPointsInterval / controlPoints;
+    for (int i = 0; i < points.size(); i++)
+    {
+        bangBangControl.addPoint(i * dt, points[i]);
+    }
+    bangBangControl.addPoint(points.size() * dt, 0);
+}
 
 //______________________________________________________________________________
 /**
@@ -270,7 +307,11 @@ int main()
 
         initialTime = ini.GetReal("SIMULATION", "START_TIME", 0);
         finalTime = ini.GetReal("SIMULATION", "END_TIME", 1);
+
+        controlPoints = ini.GetInteger("OPTIMIZATION", "CONTROL_POINTS", 10);
+        controlPointsInterval = ini.GetReal("OPTIMIZATION", "CONTROL_POINTS_INTERVAL", 0.5);
         penaltyWeight = ini.GetReal("OPTIMIZATION", "PENALTY_WEIGHT", 0.001);
+
 
         optLog = ofstream(resultDir + "/optLog.txt", ofstream::out);
         bestSoFarLog = ofstream(resultDir + "/bestSoFarLog.txt", ofstream::out);
@@ -282,66 +323,42 @@ int main()
         // Ensures all components are printed out to the model file.
         Object::setSerializeAllDefaults(true);
 
-        // Create a new OpenSim model from file
         Model osimModel(modelPath);
 
+        // add analysis
         forceAnalysis = new ForceReporter(&osimModel);
         osimModel.addAnalysis(forceAnalysis);
 
         bodyKinematics = new BodyKinematics(&osimModel);
         osimModel.addAnalysis(bodyKinematics);
 
-        // The number of parameters is the number of actuators
         const Set<Actuator> &actuatorSet = osimModel.getActuators();
         int numActuators = actuatorSet.getSize();
         optLog << "numActuators = " << numActuators << endl;
-        int numParameters = numActuators;
 
-        /* Define initial values for controllerParameters. Each controller has two parameters, an
-           initial time, and a duration for bang-bang control. There are as many controls as
-           there are actuators because we assume symmetry (but each controller has two parameters).
-           controllerParameters = [ti_0 duration_0 ti_1 duration_1 ... ]' */
+        // initialize controller parameters
+        /*
+        Control parameters are organized as follows:
+        for each muscle we map a set of controlPoints at constant intervals
+        which is given by controlPointsIntervals / controlPoints so at the end
+        we have muscles x control points parameters which are mapped between
+        [0, controlPointsInterval] time at constant step.
 
-           // initialize controller parameters
-        Vector controllerParameters(numParameters, 0.05);
+        Because of the symmetry of the muscles we choose numActuators / 2 muscles.
+        */
+        int numParameters = numActuators / 2 * controlPoints;
+        Vector controllerParameters(numParameters, 0.01);
 
-        // initialize initial time for each excitation
-        controllerParameters[0] = 0.107829; //hamstrings
-        controllerParameters[2] = 0.000694389; //bifmesh
-        controllerParameters[4] = 0.296862; //glut_max
-        controllerParameters[6] = 0.0533367; //iliopsoas
-        controllerParameters[8] = 0.166411; //rect_fem
-        controllerParameters[10] = 0.277515; //vasti
-        controllerParameters[12] = 0.34415; //gastroc
-        controllerParameters[14] = 0.315352; //soleus
-        controllerParameters[16] = 0.0857547; //tib_ant
-        controllerParameters[18] = 0.149619; //ercspn
-        controllerParameters[20] = 0.468751; //intobl
-        controllerParameters[22] = 0.455196; //extobl
-
-        // initialize durations
-        controllerParameters[1] = 0.429037; //hamstrings
-        controllerParameters[3] = 0.12063; //bifemsh
-        controllerParameters[5] = 0.392451; //glut_max
-        controllerParameters[7] = 0.0303019; //iliopsoas
-        controllerParameters[9] = 0.370407; //rect_fem
-        controllerParameters[11] = 0.3; //vasti
-        controllerParameters[13] = 0.343607; //gastroc
-        controllerParameters[15] = 0.350789; //soleus
-        controllerParameters[17] = 0.0276857; //tib_ant
-        controllerParameters[19] = 0.243365; //ercspn
-        controllerParameters[21] = 0.160011; //intobl
-        controllerParameters[23] = 0.151908; //extobl
-
-        // Add prescribed controllers to each muscle. Need to only loop numActuators/2 times since we are enforcing symmetry.
-        // It is assumed that all actuators are listed for one side of the model first, then the other side, in the same order.
+        /* Add prescribed controllers to each muscle.
+        Need to only loop numActuators/2 times since we are enforcing symmetry.
+        It is assumed that all actuators are listed for one side of the model first,
+        then the other side, in the same order.
+        */
         for (int i = 0; i < numActuators / 2; i++)
         {
             // make a piecewise constant function for both sides
             PiecewiseConstantFunction bangBangControl;
-            bangBangControl.addPoint(initialTime, 0);
-            bangBangControl.addPoint(controllerParameters[2 * i], 1);
-            bangBangControl.addPoint(controllerParameters[2 * i] + controllerParameters[2 * i + 1], 0);
+            mapControlPointsToController(i, controllerParameters, bangBangControl);
 
             // add controller to right side
             PrescribedController *actuatorController_r = new PrescribedController();
@@ -349,7 +366,8 @@ int main()
             actuator_r.insert(0, osimModel.getActuators().get(i));
             actuatorController_r->setName(actuatorSet.get(i).getName());
             actuatorController_r->setActuators(*actuator_r.clone());
-            actuatorController_r->prescribeControlForActuator(osimModel.getActuators().get(i).getName(), bangBangControl.clone());
+            actuatorController_r->prescribeControlForActuator(
+                osimModel.getActuators().get(i).getName(), bangBangControl.clone());
             osimModel.addController(actuatorController_r);
 
             // add controller to left side
@@ -358,7 +376,8 @@ int main()
             actuator_l.insert(0, osimModel.getActuators().get(i + numActuators / 2));
             actuatorController_l->setName(actuatorSet.get(i + numActuators / 2).getName());
             actuatorController_l->setActuators(*actuator_l.clone());
-            actuatorController_l->prescribeControlForActuator(osimModel.getActuators().get(i + numActuators / 2).getName(), bangBangControl.clone());
+            actuatorController_l->prescribeControlForActuator(
+                osimModel.getActuators().get(i + numActuators / 2).getName(), bangBangControl.clone());
             osimModel.addController(actuatorController_l);
         }
 
@@ -367,34 +386,29 @@ int main()
         Real f = NaN;
 
         // Set lower and upper bounds.
-        Vector lower_bounds(numParameters, initialTime);
-        Vector upper_bounds(numParameters, finalTime);
+        Vector lowerBounds(numParameters, 0.01);
+        Vector upperBounds(numParameters, 1.0);
 
-        // Limit the duration of the "bang" to be at least a certain value to decrease search space.
-        for (int i = 1; i < numParameters; i += 2)
-        {
-            lower_bounds[i] = 0.0001;
-        }
-
-        sys.setParameterLimits(lower_bounds, upper_bounds);
+        sys.setParameterLimits(lowerBounds, upperBounds);
 
         // Create an optimizer. Pass in our OptimizerSystem
         // and the name of the optimization algorithm.
-        optLog << "using LBFGSB" << endl; Optimizer opt(sys, SimTK::LBFGSB); //LBFGSB was found to be beter for this problem
+        //LBFGSB was found to be better for this problem (not sure if this is true Dimitris)
+        optLog << "Using:" << endl; Optimizer opt(sys, SimTK::CMAES);
         //optLog << "using IPOPT" << endl; Optimizer opt(sys, InteriorPoint);
 
         // Specify settings for the optimizer
         opt.setConvergenceTolerance(0.01);
         opt.useNumericalGradient(true);
-        opt.setMaxIterations(1000);
+        opt.setMaxIterations(500);
         opt.setLimitedMemoryHistory(500);
         //opt.setDiagnosticsLevel(4); // Lowest level that gives outer loop information for IPOPT
 
         // Optimize it!
         optLog << "Optimizing!" << endl;
         optLog << "Initial controllerParameters: " << controllerParameters << endl;
-        optLog << "lower_bounds: " << lower_bounds << endl;
-        optLog << "upper_bounds: " << upper_bounds << endl;
+        optLog << "Lower bounds: " << lowerBounds << endl;
+        optLog << "Upper bounds: " << upperBounds << endl;
         f = opt.optimize(controllerParameters);
 
         optLog << "Elapsed time = " << (std::clock() - startTime) / CLOCKS_PER_SEC << "s" << endl;
