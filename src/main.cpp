@@ -1,39 +1,3 @@
-/* -------------------------------------------------------------------------- *
- *                     OpenSim:  JumpingOptimization.cpp                      *
- * -------------------------------------------------------------------------- *
- * The OpenSim API is a toolkit for musculoskeletal modeling and simulation.  *
- * See http://opensim.stanford.edu and the NOTICE file for more information.  *
- * OpenSim is developed at Stanford University and supported by the US        *
- * National Institutes of Health (U54 GM072970, R24 HD065690) and by DARPA    *
- * through the Warrior Web program.                                           *
- *                                                                            *
- * Copyright (c) 2005-2012 Stanford University and the Authors                *
- * Author(s): Carmichael Ong, Matt Titchenal                                  *
- *                                                                            *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may    *
- * not use this file except in compliance with the License. You may obtain a  *
- * copy of the License at http://www.apache.org/licenses/LICENSE-2.0.         *
- *                                                                            *
- * Unless required by applicable law or agreed to in writing, software        *
- * distributed under the License is distributed on an "AS IS" BASIS,          *
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.   *
- * See the License for the specific language governing permissions and        *
- * limitations under the License.                                             *
- * -------------------------------------------------------------------------- */
-
- /*
-  *  This was created for a class project at Stanford for ME 485.
-  *
-  *  This file loads a model and adds a PrescribedController to each of the actuators.
-  *  PiecewiseConstantFunction is used to create the bang-bang control from the
-  *  parameters of initial time and duration of the bang-bang control. The model is then
-  *  fed into an OptimizerSystem, which is defined in this file. A TriggeredEventHandler
-  *  is also used to decrease simulation time.
-  *
-  */
-
-  //==============================================================================
-  //==============================================================================
 #include <OpenSim/OpenSim.h>
 #include <OpenSim/Common/PiecewiseConstantFunction.h>
 #include <OpenSim/Analyses/ForceReporter.h>
@@ -159,8 +123,10 @@ public:
         // Initialize the system. initSystem() cannot be used here because adding the event handler
         // must be done between buildSystem() and initializeState().
         osimModel.buildSystem();
-        //TerminateSimulation *terminate = new TerminateSimulation(osimModel, forceThreshold);
-        //osimModel.updMultibodySystem().addEventHandler(terminate);
+        TerminateSimulation *terminate = new TerminateSimulation(osimModel, forceThreshold);
+        osimModel.updMultibodySystem().addEventHandler(terminate);
+
+        // reset analysis
         forceAnalysis->updForceStorage().reset(0);
         bodyKinematics->getPositionStorage()->reset(0);
         bodyKinematics->getAccelerationStorage()->reset(0);
@@ -192,53 +158,54 @@ public:
         manager.setFinalTime(finalTime);
         manager.integrate(osimState);
 
-        Storage* kin = bodyKinematics->getPositionStorage();
-        Storage& force = forceAnalysis->updForceStorage();
+        //// compute cost function
+        //Storage* kin = bodyKinematics->getPositionStorage();
+        //Storage& force = forceAnalysis->updForceStorage();
 
-        Array<double> time, comY, lumbarLimit, kneeRLimit, kneeLLimit;
-        kin->getTimeColumn(time);
-        kin->getDataColumn("center_of_mass_Y", comY);
-        force.getDataColumn("LumbarExtensionLimit", lumbarLimit);
-        force.getDataColumn("KneeLimit_r", kneeRLimit);
-        force.getDataColumn("KneeLimit_l", kneeLLimit);
+        //Array<double> time, comY, lumbarLimit, kneeRLimit, kneeLLimit;
+        //kin->getTimeColumn(time);
+        //kin->getDataColumn("center_of_mass_Y", comY);
+        //force.getDataColumn("LumbarExtensionLimit", lumbarLimit);
+        //force.getDataColumn("KneeLimit_r", kneeRLimit);
+        //force.getDataColumn("KneeLimit_l", kneeLLimit);
 
-        double maxHeight = 0;
-        int maxIndex = 0;
-        for (int i = 0; i < time.size(); i++)
-        {
-            if (comY[i] > maxHeight)
-            {
-                maxHeight = comY[i];
-                maxIndex = i;
-            }
-        }
+        //double maxHeight = 0;
+        //int maxIndex = 0;
+        //for (int i = 0; i < time.size(); i++)
+        //{
+        //    if (comY[i] > maxHeight)
+        //    {
+        //        maxHeight = comY[i];
+        //        maxIndex = i;
+        //    }
+        //}
 
-        // trapezoid integration 0.5 sum (ti - ti-1) * (fi - fi-1)
-        double trapezSum = 0;
-        for (int i = 1; i <= maxIndex; i++)
-        {
-            double fi = pow(lumbarLimit[i], 2) + pow(kneeRLimit[i], 2) + pow(kneeLLimit[i], 2);
-            double fminus = pow(lumbarLimit[i - 1], 2) + pow(kneeRLimit[i - 1], 2) + pow(kneeLLimit[i - 1], 2);
-            trapezSum += (time[i] - time[i - 1]) * (fi + fminus);
-        }
-        // multiply by - because optimization tries to minimize
-        f = -(maxHeight - penaltyWeight * 0.5 * trapezSum);
+        //// trapezoid integration 0.5 sum (ti - ti-1) * (fi - fi-1)
+        //double trapezSum = 0;
+        //for (int i = 1; i <= maxIndex; i++)
+        //{
+        //    double fi = pow(lumbarLimit[i], 2) + pow(kneeRLimit[i], 2) + pow(kneeLLimit[i], 2);
+        //    double fminus = pow(lumbarLimit[i - 1], 2) + pow(kneeRLimit[i - 1], 2) + pow(kneeLLimit[i - 1], 2);
+        //    trapezSum += (time[i] - time[i - 1]) * (fi + fminus);
+        //}
+        //// multiply by - because optimization tries to minimize
+        //f = -(maxHeight - penaltyWeight * 0.5 * trapezSum);
 
-        cout << "Max height: " << maxHeight << endl;
-        cout << "Ligaments: " << 0.5 * trapezSum << endl;
-        cout << "Cost: " << -f << endl;
+        //cout << "Max height: " << maxHeight << endl;
+        //cout << "Ligaments: " << 0.5 * trapezSum << endl;
+        //cout << "Cost: " << -f << endl;
 
         /* Calculate the scalar quantity we want to minimize or maximize.
         *  In this case, we’re maximizing the height of the COM of the jumper
         *  so to maximize, calculate (position + velocity^2)/(2g) when simulation ends.
         *  Then take the negative of that quantity (since optimizers minimize).
         */
-        /*osimModel.getMultibodySystem().realize(osimState, Stage::Velocity);
+        osimModel.getMultibodySystem().realize(osimState, Stage::Velocity);
         Vec3 COM_position = osimModel.getMultibodySystem().getMatterSubsystem().calcSystemMassCenterLocationInGround(osimState);
         Vec3 COM_velocity = osimModel.getMultibodySystem().getMatterSubsystem().calcSystemMassCenterVelocityInGround(osimState);
         double g = -osimModel.getGravity()[1];
         double maxHeight = COM_position[1] + pow(COM_velocity[1], 2.0) / (2.0*g);
-        f = -maxHeight;*/
+        f = -maxHeight;
 
         stepCount++;
 
@@ -264,7 +231,7 @@ public:
         {
             manager.getStateStorage().print(resultDir + "/Jumper_bestSoFar_states.sto");
             osimModel.print(resultDir + "/Jumper_bestSoFar.osim");
-            //osimModel.printControlStorage("Arm26_bestSoFar_controls.sto");
+            osimModel.printControlStorage(resultDir + "/Jumper_bestSoFar_controls.sto");
             forceAnalysis->printResults("Jumper_best", resultDir);
             bodyKinematics->printResults("Jumper_best", resultDir);
             bestSoFar = f;
