@@ -31,7 +31,7 @@ ofstream debugLog;
 std::clock_t optimizerStartTime;
 
 void mapControlPointsToController(int index, const Vector& parameters,
-    PiecewiseConstantFunction& bangBangControl);
+    PiecewiseLinearFunction& bangBangControl);
 
 //=============================================================================
 // EVENT HANDLER: TerminateSimulation
@@ -107,7 +107,7 @@ public:
         for (int i = 0; i < numControllers / 2; i++)
         {
             // define a piecewise constant function for both sides
-            PiecewiseConstantFunction bangBangControl;
+            PiecewiseLinearFunction bangBangControl;
             mapControlPointsToController(i, parameters, bangBangControl);
 
             // Update the right side
@@ -280,7 +280,7 @@ private:
 };
 
 void mapControlPointsToController(int index, const Vector& parameters,
-    PiecewiseConstantFunction& bangBangControl)
+    PiecewiseLinearFunction& bangBangControl)
 {
     Vector points = parameters(index * controlPoints, controlPoints);
 
@@ -347,7 +347,7 @@ int main()
         Because of the symmetry of the muscles we choose numActuators / 2 muscles.
         */
         int numParameters = numActuators / 2 * controlPoints;
-        Vector controllerParameters(numParameters, 0.01);
+        Vector controllerParameters(numParameters, 0.5);
 
         /* Add prescribed controllers to each muscle.
         Need to only loop numActuators/2 times since we are enforcing symmetry.
@@ -357,7 +357,7 @@ int main()
         for (int i = 0; i < numActuators / 2; i++)
         {
             // make a piecewise constant function for both sides
-            PiecewiseConstantFunction bangBangControl;
+            PiecewiseLinearFunction bangBangControl;
             mapControlPointsToController(i, controllerParameters, bangBangControl);
 
             // add controller to right side
