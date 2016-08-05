@@ -394,14 +394,16 @@ int main()
         // Create an optimizer. Pass in our OptimizerSystem
         // and the name of the optimization algorithm.
         //LBFGSB was found to be better for this problem (not sure if this is true Dimitris)
-        optLog << "Using:" << endl; Optimizer opt(sys, SimTK::CMAES);
+        optLog << "Using: CMAES" << endl; Optimizer opt(sys, SimTK::CMAES);
+        //optLog << "Using: LBFGSB" << endl; Optimizer opt(sys, SimTK::LBFGSB);
         //optLog << "using IPOPT" << endl; Optimizer opt(sys, InteriorPoint);
 
         // Specify settings for the optimizer
-        opt.setConvergenceTolerance(0.01);
         opt.useNumericalGradient(true);
-        opt.setMaxIterations(500);
-        opt.setLimitedMemoryHistory(500);
+        /*opt.setConvergenceTolerance(0.01);
+
+        opt.setMaxIterations(1000);
+        opt.setLimitedMemoryHistory(500);*/
         //opt.setDiagnosticsLevel(4); // Lowest level that gives outer loop information for IPOPT
 
         // Optimize it!
