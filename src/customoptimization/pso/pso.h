@@ -1,25 +1,8 @@
-/* An implementation of the Particle Swarm Optimization algorithm
+#ifndef PSO_H
+#define PSO_H
 
-   Copyright 2010 Kyriakos Kentzoglanakis
-
-   This program is free software: you can redistribute it and/or
-   modify it under the terms of the GNU General Public License version
-   3 as published by the Free Software Foundation.
-
-   This program is distributed in the hope that it will be useful, but
-   WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-   General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program.  If not, see
-   <http://www.gnu.org/licenses/>.
- */
-
-
-#ifndef PSO_H_
-#define PSO_H_
-
+#include <iostream>
+#include <random>
 
 // CONSTANTS
 #define PSO_MAX_SIZE 100 // max swarm size
@@ -44,26 +27,23 @@
 #define PSO_W_CONST 0
 #define PSO_W_LIN_DEC 1
 
-
-
 // PSO SOLUTION -- Initialized by the user
-typedef struct {
-
+typedef struct
+{
     double error;
     double *gbest; // should contain DIM elements!!
-
 } pso_result_t;
 
 
 
 // OBJECTIVE FUNCTION TYPE
-typedef double (*pso_obj_fun_t)(double *, int, void *);
+typedef double(*pso_obj_fun_t)(double *, int, void *);
 
 
 
 // PSO SETTINGS
-typedef struct {
-
+typedef struct
+{
     int dim; // problem dimensionality
     double x_lo; // lower range limit
     double x_hi; // higher range limit
@@ -81,12 +61,10 @@ typedef struct {
     int clamp_pos; // whether to keep particle position within defined bounds (TRUE)
                    // or apply periodic boundary conditions (FALSE)
     int nhood_strategy; // neighborhood strategy (see PSO_NHOOD_*)
-    int nhood_size; // neighborhood size 
+    int nhood_size; // neighborhood size
     int w_strategy; // inertia weight strategy (see PSO_W_*)
 
-    void *rng; // pointer to random number generator (use NULL to create a new RNG)
-    long seed; // seed for the generator
-
+    std::default_random_engine generator; // pointer to random number generator (use NULL to create a new RNG)
 } pso_settings_t;
 
 
@@ -101,8 +79,8 @@ void pso_set_default_settings(pso_settings_t *settings);
 // minimize the provided obj_fun using PSO with the specified settings
 // and store the result in *solution
 void pso_solve(pso_obj_fun_t obj_fun, void *obj_fun_params,
-	       pso_result_t *solution, pso_settings_t *settings);
+    pso_result_t *solution, pso_settings_t *settings);
 
 
-    
+
 #endif // PSO_H_
